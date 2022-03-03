@@ -1,0 +1,120 @@
+---
+title: "Individual Project"
+author: "mstewart2000"
+date: "02/03/2022"
+output: html_document
+GitHub: https://github.com/mstewart2000/Individual-Project
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Initial Setup of Packages
+```{r echo = FALSE}
+library(BiocManager)
+library(genbankr)
+library(Biostrings)
+library(ggtree)
+library(muscle)
+library(ape)
+library(reshape2)
+library(rentrez)
+```
+
+# Initial Investigation
+The following sequence has been detected in a patient's bio fluids. I will endeavor to determine what it is, and if it is a cause of concern
+```{r}
+HSeq = ("ATGTCTGATAATGGACCCCAAAATCAGCGAAATGCACCCCGCATTACGTTTGGTGGACCCTCAGATTCAACTGGCAGTAACCAGAATGGAGAACGCAGTGGGGCGCGATCAAAACAACGTCGGCCCCAAGGTTTACCCAATAATACTGCGTCTTGGTTCACCGCTCTCACTCAACATGGCAAGGAAGACCTTAAATTCCCTCGAGGACAAGGCGTTCCAATTAACACCAATAGCAGTCCAGATGACCAAATTGGCTACTACCGAAGAGCTACCAGACGAATTCGTGGTGGTGACGGTAAAATGAAAGATCTCAGTCCAAGATGGTATTTCTACTACCTAGGAACTGGGCCAGAAGCTGGACTTCCCTATGGTGCTAACAAAGACGGCATCATATGGGTTGCAACTGAGGGAGCCTTGAATACACCAAAAGATCACATTGGCACCCGCAATCCTGCTAACAATGCTGCAATCGTGCTACAACTTCCTCAAGGAACAACATTGCCAAAAGGCTTCTACGCAGAAGGGAGCAGAGGCGGCAGTCAAGCCTCTTCTCGTTCCTCATCACGTAGTCGCAACAGTTCAAGAAATTCAACTCCAGGCAGCAGTAGGGGAACTTCTCCTGCTAGAATGGCTGGCAATGGCGGTGATGCTGCTCTTGCTTTGCTGCTGCTTGACAGATTGAACCAGCTTGAGAGCAAAATGTCTGGTAAAGGCCAACAACAACAAGGCCAAACTGTCACTAAGAAATCTGCTGCTGAGGCTTCTAAGAAGCCTCGGCAAAAACGTACTGCCACTAAAGCATACAATGTAACACAAGCTTTCGGCAGACGTGGTCCAGAACAAACCCAAGGAAATTTTGGGGACCAGGAACTAATCAGACAAGGAACTGATTACAAACATTGGCCGCAAATTGCACAATTTGCCCCCAGCGCTTCAGCGTTCTTCGGAATGTCGCGCATTGGCATGGAAGTCACACCTTCGGGAACGTGGTTGACCTACACAGGTGCCATCAAATTGGATGACAAAGATCCAAATTTCAAAGATCAAGTCATTTTGCTGAATAAGCATATTGACGCATACAAAACATTCCCACCAACAGAGCCTAAAAAGGACAAAAAGAAGAAGGCTGATGAAACTCAAGCCTTACCGCAGAGACAGAAGAAACAGCAAACTGTGACTCTTCTTCCTGCTGCAGATTTGGATGATTTCTCCAAACAATTGCAACAATCCATGAGCAGTGCTGACTCAACTCAGGCCTAA")
+```
+
+I will now run a BLAST on this sequence to find similar sequences
+```{r}
+library(annotate)
+HBLAST = blastSequences(HSeq, as = "data.frame", hitListSize = 20, timeout = 600)
+```
+
+I will now compare these sequences that I have collected using BLAST, first by organizing them
+```{r}
+library(ape)
+HHitsDF = data.frame(ID = HBLAST$Hit_accession, Seq = HBLAST$Hsp_hseq, stringsAsFactors = FALSE)
+```
+
+Now I will see what species these sequences belong to
+```{r}
+HHitSeq = read.GenBank(HBLAST$Hit_accession)
+attr(HHitSeq, "species")
+```
+This means that the comparable sequences all belong to SARS-Cov-2 or COVID-19. This likely means that the patient has contracted COVID-19.
+
+# Analysis
+I will now analyse the sequences and first try to align them
+
+The first step is to convert the data into a DNAStringSET object
+```{r echo = FALSE}
+library(dplyr)
+HHitsDNAstring = HHitSeq %>%
+  as.character %>%
+  lapply(., paste0, collapse = "") %>%
+  unlist %>%
+  DNAStringSet
+```
+
+Now I will create an index to identify each individual sequence
+```{r}
+names(HHitsDNAstring) = paste(1:nrow(HHitsDF), HHitsDF$ID, sep = "_")
+```
+
+# Inspecting the Results
+I will now remove the sequences with large gaps to make analysis easier
+```{r}
+SeqLen = as.numeric(lapply(HHitsDNAstring, length))
+library(ggplot2)
+qplot(SeqLen) + theme_bw()
+```
+
+Based on these results, bp is a good cutoff to use. I will now create a subset and re-align it using this cutoff
+```{r}
+KeepSeq = SeqLen < 29800
+  HSubSet = HHitsDNAstring[KeepSeq,] 
+```
+
+I will now re-align the sequences with this subset
+```{r}
+HSubAlign = muscle::muscle(HSubSet, quiet = T)
+HSubAlign
+```
+
+# Distance Matrix
+I will now create a distance matrix to further analyze the sequences
+
+To begin I must convert HSubAlign from a DNAMultipleAlignment object to a DNAbin object
+```{r}
+HSubAlignBin = as.DNAbin(HSubAlign)
+HDM = dist.dna(HSubAlignBin, model = "K80")
+```
+
+Now I will convert the martix from n x n to a linear matrix
+```{r}
+library(reshape2)
+HDMmat = as.matrix(HDM)
+dim(HDMmat)
+PDat = melt(HDMmat)
+dim(PDat)
+PDat$value[PDat$value > 0.2] = NA
+ggplot(data = PDat, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+    scale_fill_gradientn(colours = c("white", "blue", "green", "red")) +
+  theme(axis.text.x = element_text(angle = 90, hjus = 1, vjust = 0.5))
+```
+As we can see based on this model, sequence 18 stands out greatly from the rest of the sequences.
+
+# Tree Building
+Now I will build a phylogeny tree based on the data I have collected
+```{r}
+HTree = nj(HDM)
+library(ggtree)
+ggtree(HTree, layout = "rectangular") +
+  geom_tiplab()
+```
+This tree clearly shows that sequence 18 is quite distinct from the other sequences. This may be a cause for worry as the patient likely has a novel form of COVID-19 and as such may represent a new variant. 
