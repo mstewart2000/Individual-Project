@@ -117,4 +117,10 @@ library(ggtree)
 ggtree(HTree, layout = "rectangular") +
   geom_tiplab()
 ```
+
+I will save a copy of this tree for use later
+```{r}
+write.tree(HTree, "SARS-Cov-2-Tree.tre")
+```
+
 This tree clearly shows that sequence 18 is quite distinct from the other sequences. This may be a cause for worry as the patient likely has a novel form of COVID-19 and as such may represent a new variant. 
